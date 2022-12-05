@@ -1,0 +1,12 @@
+# Bushwalk dataset
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+# path: /datasets/work/mlaifsp-st-d61/work/gri317/datasets/bushwalk_dataset  # dataset root dir
+train: /datasets/work/mlaifsp-st-d61/work/gri317/datasets/bushwalk_dataset/images/train # train images (relative to 'path')
+val: /datasets/work/mlaifsp-st-d61/work/gri317/datasets/bushwalk_dataset/images/val
+test: /datasets/work/mlaifsp-st-d61/work/gri317/datasets/bushwalk_dataset/images/test
+
+# number of classes
+nc: 1
+
+# class names
+names: [ 'tree' ]

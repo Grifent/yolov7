@@ -7,6 +7,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from threading import Thread
+import hostlist
 
 import numpy as np
 import torch.distributed as dist
@@ -558,20 +559,42 @@ if __name__ == '__main__':
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
+    parser.add_argument('--port', type=int, default=12345, help='port for ddp')
     opt = parser.parse_args()
 
     # For debugging
-    # print(os.environ.items())
+    # print(f"---Begin Environment---\n{os.environ.items()}", flush=True)
+    # print(f"---End Environment---", flush=True)
 
     # Set DDP variables
-    opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
-    opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
-    set_logging(opt.global_rank)
+    # opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
+    # opt.global_rank = int(os.environ['RANK']) if 'RANK' in os.environ else -1
+    opt.world_size = int(os.environ.get('SLURM_NTASKS', 1)) if 'SLURM_NTASKS' in os.environ else 1    
+    opt.global_rank = int(os.environ.get('SLURM_PROCID', 0)) if 'SLURM_PROCID' in os.environ else -1
+    opt.local_rank = int(os.environ.get("SLURM_LOCALID", 0)) if "SLURM_LOCALID" in os.environ else -1
+    # set_logging(opt.global_rank)
     #if opt.global_rank in [-1, 0]:
     #    check_git_status()
     #    check_requirements()
 
+    # Get correct port for ddp
+    if "SLURM_STEPS_GPUS" in os.environ:
+        gpu_ids = os.environ["SLURM_STEP_GPUS"].split(",")
+        os.environ["MASTER_PORT"] = str(opt.port + int(min(gpu_ids)))
+    else:
+        os.environ["MASTER_PORT"] = str(opt.port)        
+    # print(f"Master Port: {os.environ["MASTER_PORT"]}", flush=True)
+
+    if "SLURM_JOB_NODELIST" in os.environ:
+        hostnames = hostlist.expand_hostlist(os.environ["SLURM_JOB_NODELIST"])
+        os.environ["MASTER_ADDR"] = hostnames[0]
+    else:
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+    # print(f"Master Addr: {os.environ["MASTER_ADDR"]}", flush=True)
+
     # Resume
+    opt.total_batch_size = opt.batch_size
+
     wandb_run = check_wandb_resume(opt)
     if opt.resume and not wandb_run:  # resume an interrupted run
         ckpt = opt.resume if isinstance(opt.resume, str) else get_latest_run()  # specified or most recent path
@@ -590,15 +613,21 @@ if __name__ == '__main__':
         opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok | opt.evolve)  # increment run
 
     # DDP mode
-    opt.total_batch_size = opt.batch_size
+    # opt.total_batch_size = opt.batch_size
     device = select_device(opt.device, batch_size=opt.batch_size)
     if opt.local_rank != -1:
         assert torch.cuda.device_count() > opt.local_rank
         torch.cuda.set_device(opt.local_rank)
+        # torch.cuda.set_device(int(os.environ['SLURM_LOCALID']))
         device = torch.device('cuda', opt.local_rank)
-        dist.init_process_group(backend='nccl', init_method='env://')  # distributed backend
+        print(f"Starting process with rank {opt.local_rank}...", flush=True)
+
+        dist.init_process_group(backend='nccl', init_method='env://', rank=opt.global_rank, world_size=opt.world_size)  # distributed backend
+        print(f"Process started...", flush=True)
         assert opt.batch_size % opt.world_size == 0, '--batch-size must be multiple of CUDA device count'
         opt.batch_size = opt.total_batch_size // opt.world_size
+    else:
+        device = select_device(opt.device, batch_size=opt.batch_size)
 
     # Hyperparameters
     with open(opt.hyp) as f:
