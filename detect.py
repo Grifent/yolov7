@@ -84,7 +84,7 @@ def detect(save_img=False):
 
         # Inference
         t1 = time_synchronized()
-        with torch.inference_mode(): # Calculating gradients would cause a GPU memory leak
+        with torch.no_grad(): # Calculating gradients would cause a GPU memory leak
             pred = model(img, augment=opt.augment)[0]
         t2 = time_synchronized()
 
